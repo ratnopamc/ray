@@ -860,16 +860,10 @@ class Worker:
                     debugger_breakpoint = metadata_fields[1][
                         len(ray_constants.OBJECT_METADATA_DEBUG_PREFIX) :
                     ]
-        values = self.deserialize_objects(data_metadata_pairs, object_refs)
-        for i, value in enumerate(values):
-            if isinstance(value, RayError):
-                if isinstance(value, ray.exceptions.ObjectLostError):
-                    global_worker.core_worker.dump_object_store_memory_usage()
-                if isinstance(value, RayTaskError):
-                    raise value.as_instanceof_cause()
-                else:
-                    raise value
-        return values, debugger_breakpoint
+        return (
+            self.deserialize_objects(data_metadata_pairs, object_refs),
+            debugger_breakpoint,
+        )
 
     def main_loop(self):
         """The main loop a worker runs to receive and execute tasks."""

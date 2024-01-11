@@ -110,6 +110,9 @@ struct ObjectInUseEntry {
   /// objects, ReadRelease resets this to false, and ReadAcquire resets to
   /// true.
   bool read_acquired = false;
+  /// The last version that we wrote. To write again, we must pass a newer
+  /// version than this.
+  int64_t next_version_to_write = 1;
 };
 
 class PlasmaClient::Impl : public std::enable_shared_from_this<PlasmaClient::Impl> {
@@ -160,8 +163,6 @@ class PlasmaClient::Impl : public std::enable_shared_from_this<PlasmaClient::Imp
                                                std::shared_ptr<Buffer> *data);
 
   Status ExperimentalMutableObjectWriteRelease(const ObjectID &object_id);
-
-  Status ExperimentalMutableObjectSetError(const ObjectID &object_id);
 
   Status Get(const std::vector<ObjectID> &object_ids,
              int64_t timeout_ms,
@@ -444,7 +445,8 @@ Status PlasmaClient::Impl::ExperimentalMutableObjectWriteAcquire(
                                    ") is larger than allocated buffer size " +
                                    std::to_string(entry->object.allocated_size));
   }
-  RAY_RETURN_NOT_OK(plasma_header->WriteAcquire(data_size, metadata_size, num_readers));
+  plasma_header->WriteAcquire(
+      entry->next_version_to_write, data_size, metadata_size, num_readers);
 
   // Prepare the data buffer and return to the client instead of sending
   // the IPC to object store.
@@ -472,6 +474,10 @@ Status PlasmaClient::Impl::ExperimentalMutableObjectWriteRelease(
     return Status::Invalid(
         "Plasma buffer for mutable object not in scope. Are you sure you're the writer?");
   }
+  if (!object_entry->second->is_writer) {
+    return Status::Invalid(
+        "Mutable objects can only be written by the original creator process.");
+  }
   RAY_CHECK(object_entry != objects_in_use_.end());
 
   auto &entry = object_entry->second;
@@ -481,25 +487,10 @@ Status PlasmaClient::Impl::ExperimentalMutableObjectWriteRelease(
 
   entry->is_sealed = true;
   auto plasma_header = GetPlasmaObjectHeader(entry->object);
-  RAY_RETURN_NOT_OK(plasma_header->WriteRelease());
-#endif
-  return Status::OK();
-}
-
-Status PlasmaClient::Impl::ExperimentalMutableObjectSetError(const ObjectID &object_id) {
-#ifdef __linux__
-  std::unique_lock<std::recursive_mutex> guard(client_mutex_);
-  auto object_entry = objects_in_use_.find(object_id);
-  if (object_entry == objects_in_use_.end()) {
-    return Status::Invalid(
-        "Plasma buffer for mutable object not in scope. Are you sure you're the writer?");
-  }
-  RAY_CHECK(object_entry != objects_in_use_.end());
-
-  auto &entry = object_entry->second;
-  RAY_CHECK(entry->object.is_experimental_mutable_object);
-  auto plasma_header = GetPlasmaObjectHeader(entry->object);
-  plasma_header->SetErrorUnlocked();
+  plasma_header->WriteRelease(
+      /*write_version=*/entry->next_version_to_write);
+  // The next Write must pass a higher version.
+  entry->next_version_to_write++;
 #endif
   return Status::OK();
 }
@@ -760,14 +751,12 @@ Status PlasmaClient::Impl::EnsureGetAcquired(
   }
 
   int64_t version_read = 0;
-
-  // Need to unlock the client mutex since ReadAcquire() is blocking. This is
-  // thread-safe since mutable plasma object are never deallocated.
-  client_mutex_.unlock();
-  Status status =
+  bool success =
       plasma_header->ReadAcquire(object_entry->next_version_to_read, &version_read);
-  client_mutex_.lock();
-  RAY_RETURN_NOT_OK(status);
+  if (!success) {
+    return Status::Invalid(
+        "Reader missed a value. Are you sure there are num_readers many readers?");
+  }
 
   object_entry->read_acquired = true;
   RAY_CHECK(version_read > 0);
@@ -809,7 +798,7 @@ Status PlasmaClient::Impl::ExperimentalMutableObjectReadRelease(
   RAY_RETURN_NOT_OK(EnsureGetAcquired(entry));
   RAY_LOG(DEBUG) << "Release shared object " << object_id;
   auto plasma_header = GetPlasmaObjectHeader(entry->object);
-  RAY_RETURN_NOT_OK(plasma_header->ReadRelease(entry->next_version_to_read));
+  plasma_header->ReadRelease(entry->next_version_to_read);
   // The next read needs to read at least this version.
   entry->next_version_to_read++;
   entry->read_acquired = false;
@@ -1080,10 +1069,6 @@ Status PlasmaClient::ExperimentalMutableObjectWriteAcquire(
 
 Status PlasmaClient::ExperimentalMutableObjectWriteRelease(const ObjectID &object_id) {
   return impl_->ExperimentalMutableObjectWriteRelease(object_id);
-}
-
-Status PlasmaClient::ExperimentalMutableObjectSetError(const ObjectID &object_id) {
-  return impl_->ExperimentalMutableObjectSetError(object_id);
 }
 
 Status PlasmaClient::CreateAndSpillIfNeeded(const ObjectID &object_id,
