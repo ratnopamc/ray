@@ -121,6 +121,10 @@ message InstanceUpdateEvent {
   Instance.InstanceStatus new_instance_status = 2;
   // The details of the status change if any.
   string details = 3;
+
+  // Below are specific event's metadata.
+  // Assigned cloud instance id. Applicable for ALLOCATED status.
+  optional string cloud_instance_id = 4;
 }
 
 // Launch request for a node type.
@@ -181,4 +185,26 @@ service InstanceManagerService {
       returns (GetInstanceManagerStateReply);
   rpc UpdateInstanceManagerState(UpdateInstanceManagerStateRequest)
       returns (UpdateInstanceManagerStateReply);
+}
+
+/* The following structs are used for the CloudInstanceProvider message. */
+
+message CloudInstanceLaunchRequest {
+  // The instance type name.
+  string instance_type = 1;
+  // The number of instances to launch.
+  int32 count = 2;
+  // A unique request id.
+  string request_id = 3;
+  // Request time in milliseconds.
+  int64 request_ts_ms = 4;
+}
+
+message CloudInstanceTerminateRequest {
+  // The instance id of the instance to terminate.
+  string cloud_instance_id = 1;
+  // A unique request id.
+  string request_id = 2;
+  // Request time in milliseconds.
+  int64 request_ts_ms = 3;
 }
