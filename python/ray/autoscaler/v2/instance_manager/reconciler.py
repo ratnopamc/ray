@@ -129,14 +129,18 @@ class StuckInstanceReconciler(IReconciler):
         for instance in instances:
             instances_by_status[instance.status].append(instance)
 
+        # Fail or retry the cloud instance allocation if it's stuck
+        # in the REQUESTED state.
         im_updates = {}
         im_updates.update(
-            StuckInstanceReconciler._reconcile_requested(
+            StuckInstanceReconciler._handle_requested_timeout(
                 instances_by_status[IMInstance.REQUESTED],
                 request_status_timeout_s=config.request_status_timeout_s,
                 max_num_request_to_allocate=config.max_num_request_to_allocate,
             )
         )
+
+        # Handle the timeout for the following statuses.
         for cur_status, next_status, timeout in [
             (
                 IMInstance.ALLOCATED,
@@ -155,7 +159,7 @@ class StuckInstanceReconciler(IReconciler):
             ),
         ]:
             im_updates.update(
-                StuckInstanceReconciler._reconcile_status(
+                StuckInstanceReconciler._handle_timeout(
                     instances_by_status[cur_status],
                     status_timeout_s=timeout,
                     cur_status=cur_status,
@@ -163,6 +167,7 @@ class StuckInstanceReconciler(IReconciler):
                 )
             )
 
+        # Warn if any instance is stuck in a transient status for too long.
         for status in [
             IMInstance.RAY_STOPPING,
             IMInstance.RAY_INSTALL_FAILED,
@@ -179,12 +184,14 @@ class StuckInstanceReconciler(IReconciler):
         return im_updates
 
     @staticmethod
-    def _reconcile_requested(
+    def _handle_requested_timeout(
         instances: List[IMInstance],
         request_status_timeout_s: int,
         max_num_request_to_allocate: int,
     ) -> Dict[str, IMInstanceUpdateEvent]:
-        """Change REQUESTED instances to QUEUED if they are stuck in REQUESTED state."""
+        """Change REQUESTED instances to QUEUED if they are stuck in REQUESTED state,
+        or fail the allocation (ALLOCATION_FAILED) if retry too many times.
+        """
 
         def _retry_or_fail_allocation(
             instance: IMInstance,
@@ -225,7 +232,7 @@ class StuckInstanceReconciler(IReconciler):
         return updates
 
     @staticmethod
-    def _reconcile_status(
+    def _handle_timeout(
         instances: List[IMInstance],
         status_timeout_s: int,
         cur_status: IMInstance.InstanceStatus,
