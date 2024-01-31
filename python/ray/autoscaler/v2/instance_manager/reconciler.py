@@ -142,16 +142,20 @@ class StuckInstanceReconciler(IReconciler):
 
         # Handle the timeout for the following statuses.
         for cur_status, next_status, timeout in [
+            # Leaked ALLOCATED instances should be terminated.
             (
                 IMInstance.ALLOCATED,
                 IMInstance.STOPPING,
                 config.allocate_status_timeout_s,
             ),
+            # Fail the installation if it's stuck in RAY_INSTALLING for too long.
             (
                 IMInstance.RAY_INSTALLING,
                 IMInstance.RAY_INSTALL_FAILED,
                 config.ray_install_status_timeout_s,
             ),
+            # Retry the termination if it's stuck in STOPPING for too long.
+            # Transition to STOPPING to trigger another termination request.
             (
                 IMInstance.STOPPING,
                 IMInstance.STOPPING,
