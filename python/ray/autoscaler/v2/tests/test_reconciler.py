@@ -54,7 +54,7 @@ def test_stuck_requested_instances():
         "failed": Instance.ALLOCATION_FAILED,
     }
     assert expected_status == {
-        update.instance_id: update.new_instance_status for _, update in updates.items()
+        update.instance_id: update.new_instance_status for update in updates
     }
 
 
@@ -94,7 +94,7 @@ def test_stuck_allocated_instances(mock_time_ns, cur_status, expect_status):
         "updated": expect_status,
     }
     assert expected_status == {
-        update.instance_id: update.new_instance_status for _, update in updates.items()
+        update.instance_id: update.new_instance_status for update in updates
     }
 
 
@@ -123,7 +123,7 @@ def test_warn_stuck_transient_instances(mock_time_ns):
     mock_logger = mock.MagicMock()
     updates = StuckInstanceReconciler.reconcile(instances, config, _logger=mock_logger)
     print(updates)
-    assert updates == {}
+    assert updates == []
     assert mock_logger.warning.call_count == 1
     assert "Instance warn is stuck" in mock_logger.warning.call_args[0][0]
 
@@ -162,7 +162,7 @@ def test_stuck_instances_no_op(mock_time_ns):
         updates = StuckInstanceReconciler.reconcile(
             instances, config, _logger=mock_logger
         )
-        assert updates == {}
+        assert updates == []
         assert mock_logger.warning.call_count == 0
 
 

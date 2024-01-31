@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class IReconciler(ABC):
     @staticmethod
     @abstractmethod
-    def reconcile(*args, **kwargs) -> Dict[str, IMInstanceUpdateEvent]:
+    def reconcile(*args, **kwargs) -> List[IMInstanceUpdateEvent]:
         """
         Reconcile the status of Instance Manager(IM) instances to a valid state.
         It should yield a list of instance update events that will be applied to the
@@ -34,7 +34,7 @@ class IReconciler(ABC):
         update events. This method is expected to be idempotent and deterministic.
 
         Returns:
-            A dict of instance id to instance update event.
+            A list of instance update event.
 
         """
         pass
@@ -46,7 +46,7 @@ class StuckInstanceReconciler(IReconciler):
         instances: List[IMInstance],
         config: InstanceReconcileConfig,
         _logger: logging.Logger = logger,
-    ) -> Dict[str, IMInstanceUpdateEvent]:
+    ) -> List[IMInstanceUpdateEvent]:
         """
         ***********************
         **STUCK STATES
@@ -131,13 +131,11 @@ class StuckInstanceReconciler(IReconciler):
 
         # Fail or retry the cloud instance allocation if it's stuck
         # in the REQUESTED state.
-        im_updates = {}
-        im_updates.update(
-            StuckInstanceReconciler._handle_requested_timeout(
-                instances_by_status[IMInstance.REQUESTED],
-                request_status_timeout_s=config.request_status_timeout_s,
-                max_num_request_to_allocate=config.max_num_request_to_allocate,
-            )
+        im_updates = []
+        im_updates += StuckInstanceReconciler._handle_requested_timeout(
+            instances_by_status[IMInstance.REQUESTED],
+            request_status_timeout_s=config.request_status_timeout_s,
+            max_num_request_to_allocate=config.max_num_request_to_allocate,
         )
 
         # Handle the timeout for the following statuses.
@@ -162,13 +160,11 @@ class StuckInstanceReconciler(IReconciler):
                 config.stopping_status_timeout_s,
             ),
         ]:
-            im_updates.update(
-                StuckInstanceReconciler._handle_timeout(
-                    instances_by_status[cur_status],
-                    status_timeout_s=timeout,
-                    cur_status=cur_status,
-                    new_status=next_status,
-                )
+            im_updates += StuckInstanceReconciler._handle_timeout(
+                instances_by_status[cur_status],
+                status_timeout_s=timeout,
+                cur_status=cur_status,
+                new_status=next_status,
             )
 
         # Warn if any instance is stuck in a transient status for too long.
@@ -192,7 +188,7 @@ class StuckInstanceReconciler(IReconciler):
         instances: List[IMInstance],
         request_status_timeout_s: int,
         max_num_request_to_allocate: int,
-    ) -> Dict[str, IMInstanceUpdateEvent]:
+    ) -> List[IMInstanceUpdateEvent]:
         """Change REQUESTED instances to QUEUED if they are stuck in REQUESTED state,
         or fail the allocation (ALLOCATION_FAILED) if retry too many times.
         """
@@ -227,11 +223,11 @@ class StuckInstanceReconciler(IReconciler):
                 )
             return None
 
-        updates = {}
+        updates = []
         for ins in instances:
             update = _retry_or_fail_allocation(ins)
             if update:
-                updates[ins.instance_id] = update
+                updates.append(update)
 
         return updates
 
@@ -241,10 +237,10 @@ class StuckInstanceReconciler(IReconciler):
         status_timeout_s: int,
         cur_status: IMInstance.InstanceStatus,
         new_status: IMInstance.InstanceStatus,
-    ) -> Dict[str, IMInstanceUpdateEvent]:
+    ) -> List[IMInstanceUpdateEvent]:
         """Change any instances that have not transitioned to the new status
         to the new status."""
-        updates = {}
+        updates = []
         for instance in instances:
             status_times_ns = InstanceUtil.get_status_transition_times_ns(
                 instance, select_instance_status=cur_status
@@ -257,16 +253,18 @@ class StuckInstanceReconciler(IReconciler):
             status_time_ns = status_times_ns[0]
 
             if time.time_ns() - status_time_ns > status_timeout_s * 1e9:
-                updates[instance.instance_id] = IMInstanceUpdateEvent(
-                    instance_id=instance.instance_id,
-                    new_instance_status=new_status,
-                    details=(
-                        "Failed to transition from "
-                        f"{IMInstance.InstanceStatus.Name(cur_status)} after "
-                        f"{status_timeout_s}s. "
-                        "Transitioning to "
-                        f"{IMInstance.InstanceStatus.Name(new_status)}."
-                    ),
+                updates.append(
+                    IMInstanceUpdateEvent(
+                        instance_id=instance.instance_id,
+                        new_instance_status=new_status,
+                        details=(
+                            "Failed to transition from "
+                            f"{IMInstance.InstanceStatus.Name(cur_status)} after "
+                            f"{status_timeout_s}s. "
+                            "Transitioning to "
+                            f"{IMInstance.InstanceStatus.Name(new_status)}."
+                        ),
+                    )
                 )
 
         return updates
@@ -297,7 +295,7 @@ class RayStateReconciler(IReconciler):
     @staticmethod
     def reconcile(
         ray_cluster_resource_state: ClusterResourceState, instances: List[IMInstance]
-    ) -> Dict[str, IMInstanceUpdateEvent]:
+    ) -> List[IMInstanceUpdateEvent]:
         """
         Reconcile the instances states for Ray node state changes.
 
@@ -317,7 +315,7 @@ class CloudProviderReconciler(IReconciler):
     @staticmethod
     def reconcile(
         provider: ICloudInstanceProvider, instances: List[IMInstance]
-    ) -> Dict[str, IMInstanceUpdateEvent]:
+    ) -> List[IMInstanceUpdateEvent]:
         """
         Reconcile the instance storage with the node provider.
         This is responsible for transitioning the instance status of:
@@ -374,7 +372,7 @@ class CloudProviderReconciler(IReconciler):
     @staticmethod
     def _reconcile_stopped(
         non_terminated_cloud_nodes: Dict[CloudInstanceId, CloudInstance]
-    ) -> Dict[str, IMInstanceUpdateEvent]:
+    ) -> List[IMInstanceUpdateEvent]:
         """
         For any IM (instance manager) instance with a cloud node id, if the mapped
         cloud instance is no longer running, transition the instance to STOPPED.
@@ -390,7 +388,7 @@ class CloudProviderReconciler(IReconciler):
     @staticmethod
     def _reconcile_failed_to_terminate(
         cloud_provider_errors: List[CloudInstanceProviderError],
-    ) -> Dict[str, IMInstanceUpdateEvent]:
+    ) -> List[IMInstanceUpdateEvent]:
         """
         For any STOPPING instances, if there's errors in terminating the cloud instance,
         we will retry the termination by setting it to STOPPING again.
