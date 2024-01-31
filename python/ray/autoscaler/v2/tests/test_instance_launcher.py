@@ -33,7 +33,9 @@ class InstanceLauncherTest(unittest.TestCase):
             EventSummarizer(),
             self.availability_tracker,
         )
-        self.config = AutoscalingConfig(load_test_config("test_ray_complex.yaml"))
+        self.config = AutoscalingConfig(
+            load_test_config("test_ray_complex.yaml"), skip_content_hash=True
+        )
         self.node_provider = NodeProviderAdapter(
             self.base_provider, self.node_launcher, self.config
         )

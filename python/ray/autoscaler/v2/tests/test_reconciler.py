@@ -1,7 +1,6 @@
 # coding: utf-8
 import os
 import sys
-import unittest
 
 import pytest  # noqa
 
@@ -59,7 +58,7 @@ def test_stuck_requested_instances():
     }
 
 
-@unittest.mock.patch("time.time_ns")
+@mock.patch("time.time_ns")
 @pytest.mark.parametrize(
     "cur_status,expect_status",
     [
@@ -99,7 +98,7 @@ def test_stuck_allocated_instances(mock_time_ns, cur_status, expect_status):
     }
 
 
-@unittest.mock.patch("time.time_ns")
+@mock.patch("time.time_ns")
 def test_warn_stuck_transient_instances(mock_time_ns):
     cur_time_s = 10
     mock_time_ns.return_value = cur_time_s * s_to_ns
@@ -129,7 +128,7 @@ def test_warn_stuck_transient_instances(mock_time_ns):
     assert "Instance warn is stuck" in mock_logger.warning.call_args[0][0]
 
 
-@unittest.mock.patch("time.time_ns")
+@mock.patch("time.time_ns")
 def test_stuck_instances_no_op(mock_time_ns):
     # Large enough to not trigger any timeouts
     mock_time_ns.return_value = 999999 * s_to_ns

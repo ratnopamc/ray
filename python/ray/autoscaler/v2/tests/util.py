@@ -50,7 +50,8 @@ def create_instance(
             Instance.StatusHistory(instance_status=s, timestamp_ns=t_ns)
             for s, t_ns in status_times
         ]
-        or [],
+        if status_times
+        else [],
     )
 
 
