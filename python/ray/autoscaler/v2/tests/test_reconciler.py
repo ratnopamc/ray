@@ -166,6 +166,11 @@ def test_stuck_instances_no_op(mock_time_ns):
         assert mock_logger.warning.call_count == 0
 
 
+# TODO: add tests.
+def test_ok():
+    assert True
+
+
 if __name__ == "__main__":
     if os.environ.get("PARALLEL_CI"):
         sys.exit(pytest.main(["-n", "auto", "--boxed", "-vs", __file__]))
